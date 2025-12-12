@@ -152,16 +152,145 @@ def plot_network_metrics_vs_load():
     plt.tight_layout()
     plt.savefig("fig_net_drop_vs_load.pdf")
 
+def plot_bottleneck_occupancy_vs_load():
+    import matplotlib.pyplot as plt
+    from collections import defaultdict
+    from queue_network_sim import Sim, Link, Flow, NetSim, StaticShortestHop, QueueAware
+
+    def run_net(policy: str, lam0: float, seed: int):
+        sim = Sim(seed=seed)
+        nodes = [0, 1, 2, 4]
+        cap = 25
+        links = [
+            Link(sim, 0, 1, mu=35.0, cap=cap, service_kind="exp", name="0->1"),
+            Link(sim, 0, 2, mu=35.0, cap=cap, service_kind="exp", name="0->2"),
+            Link(sim, 1, 4, mu=8.0,  cap=cap, service_kind="exp", name="1->4"),  # bottleneck
+            Link(sim, 2, 4, mu=16.0, cap=cap, service_kind="exp", name="2->4"),
+        ]
+        out_links = defaultdict(list)
+        for lk in links:
+            out_links[lk.u].append(lk)
+
+        destinations = [4]
+        if policy == "static":
+            router = StaticShortestHop(nodes, out_links, destinations)
+            epoch = None
+        else:
+            router = QueueAware(nodes, out_links, destinations, epoch=0.1, beta=8.0)
+            epoch = 0.1
+
+        flows = [
+            Flow(flow_id=0, src=0, dst=4, lam=lam0, arrival_kind="poisson"),
+            Flow(flow_id=1, src=1, dst=4, lam=6.0,  arrival_kind="poisson"),
+        ]
+        net = NetSim(sim, nodes, links, flows, router, t_end=3000, warmup=300, epoch=epoch)
+        res = net.run()
+        return res["links"]["1->4"]["avg_n"]  # average queue occupancy at bottleneck
+
+    lams0 = [8, 12, 16, 18, 20, 22, 24]
+    seeds = [1, 2, 3]
+
+    def avg(policy):
+        ys = []
+        for lam0 in lams0:
+            vals = [run_net(policy, lam0, s) for s in seeds]
+            ys.append(sum(vals)/len(vals))
+        return ys
+
+    y_static = avg("static")
+    y_queue  = avg("queue")
+
+    plt.figure()
+    plt.plot(lams0, y_static, label="Static shortest-hop")
+    plt.plot(lams0, y_queue, label="Queue-aware")
+    plt.xlabel(r"Flow-0 offered rate $\lambda_0$")
+    plt.ylabel(r"Avg. occupancy on link $1\to 4$ (packets)")
+    plt.title("Bottleneck Link Queue Occupancy vs Load")
+    plt.grid(True)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig("fig_net_bottleneck_avgN_vs_load.pdf")
+
+def plot_per_flow_throughput_vs_load():
+    import matplotlib.pyplot as plt
+    from collections import defaultdict
+    from queue_network_sim import Sim, Link, Flow, NetSim, StaticShortestHop, QueueAware
+
+    def run_net(policy: str, lam0: float, seed: int):
+        sim = Sim(seed=seed)
+        nodes = [0, 1, 2, 4]
+        cap = 25
+        links = [
+            Link(sim, 0, 1, mu=35.0, cap=cap, service_kind="exp", name="0->1"),
+            Link(sim, 0, 2, mu=35.0, cap=cap, service_kind="exp", name="0->2"),
+            Link(sim, 1, 4, mu=8.0,  cap=cap, service_kind="exp", name="1->4"),
+            Link(sim, 2, 4, mu=16.0, cap=cap, service_kind="exp", name="2->4"),
+        ]
+        out_links = defaultdict(list)
+        for lk in links:
+            out_links[lk.u].append(lk)
+
+        destinations = [4]
+        if policy == "static":
+            router = StaticShortestHop(nodes, out_links, destinations)
+            epoch = None
+        else:
+            router = QueueAware(nodes, out_links, destinations, epoch=0.1, beta=8.0)
+            epoch = 0.1
+
+        flows = [
+            Flow(flow_id=0, src=0, dst=4, lam=lam0, arrival_kind="poisson"),
+            Flow(flow_id=1, src=1, dst=4, lam=6.0,  arrival_kind="poisson"),
+        ]
+        net = NetSim(sim, nodes, links, flows, router, t_end=3000, warmup=300, epoch=epoch)
+        res = net.run()
+        f0 = res["flows"][0]["throughput"]
+        f1 = res["flows"][1]["throughput"]
+        return f0, f1
+
+    lams0 = [8, 12, 16, 18, 20, 22, 24]
+    seeds = [1, 2, 3]
+
+    def avg(policy):
+        f0s, f1s = [], []
+        for lam0 in lams0:
+            vals = [run_net(policy, lam0, s) for s in seeds]
+            f0s.append(sum(v[0] for v in vals)/len(vals))
+            f1s.append(sum(v[1] for v in vals)/len(vals))
+        return f0s, f1s
+
+    f0_static, f1_static = avg("static")
+    f0_queue,  f1_queue  = avg("queue")
+
+    plt.figure()
+    plt.plot(lams0, f0_static, label="Flow0 thr (static)")
+    plt.plot(lams0, f0_queue,  label="Flow0 thr (queue-aware)")
+    plt.plot(lams0, f1_static, label="Flow1 thr (static)")
+    plt.plot(lams0, f1_queue,  label="Flow1 thr (queue-aware)")
+    plt.xlabel(r"Flow-0 offered rate $\lambda_0$")
+    plt.ylabel("Throughput (pkt/s)")
+    plt.title("Per-flow Throughput vs Load")
+    plt.grid(True)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig("fig_net_perflow_throughput_vs_load.pdf")
+
+
+
 def main():
     plot_mm1_delay_vs_rho()
     plot_mm1n_drop_vs_lambda()
     plot_network_metrics_vs_load()
+    plot_bottleneck_occupancy_vs_load()
+    plot_per_flow_throughput_vs_load()
+
     print("Saved PDFs:")
     print("  fig_mm1_delay_vs_rho.pdf")
     print("  fig_mm1n_drop_vs_lambda.pdf")
     print("  fig_net_throughput_vs_load.pdf")
     print("  fig_net_delay_vs_load.pdf")
     print("  fig_net_drop_vs_load.pdf")
+    print("  bottleneck, throughput")
 
 if __name__ == "__main__":
     main()
